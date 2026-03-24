@@ -25,12 +25,38 @@
   }
 
   /* ── Level Design Panel ── */
-  #panel {
+  #panel-wrapper {
     width: 100%; max-width: 520px;
-    background: #111827;
-    border-top: 1px solid #1f2937;
-    padding: 14px 20px 12px;
     flex-shrink: 0;
+    align-self: center;
+  }
+  #panel-toggle {
+    width: 100%; border: none; background: #111827;
+    border-top: 1px solid #1f2937;
+    padding: 6px 0; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    color: #6b7280; font-size: 11px; font-family: system-ui, sans-serif;
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+  #panel-toggle:hover { color: #9ca3af; }
+  #panel-toggle .chevron {
+    display: inline-block; transition: transform 0.2s;
+    font-size: 10px;
+  }
+  #panel-toggle.open .chevron { transform: rotate(180deg); }
+  #panel {
+    width: 100%;
+    background: #111827;
+    padding: 10px 20px 12px;
+    flex-shrink: 0;
+    overflow: hidden;
+    max-height: 0;
+    transition: max-height 0.25s ease, padding 0.25s ease;
+    padding-top: 0; padding-bottom: 0;
+  }
+  #panel.open {
+    max-height: 200px;
+    padding-top: 10px; padding-bottom: 12px;
   }
   .param-row {
     display: flex; align-items: center; gap: 10px;
@@ -108,40 +134,45 @@
 
 <canvas id="game"></canvas>
 
-<div id="panel">
-  <div class="param-row">
-    <span class="param-label">Size</span>
-    <div class="slider-track">
-      <input type="range" id="sliderSize" min="5" max="15" step="1" value="5">
+<div id="panel-wrapper">
+  <button id="panel-toggle" onclick="togglePanel()">
+    <span>Level Design</span><span class="chevron">&#9650;</span>
+  </button>
+  <div id="panel">
+    <div class="param-row">
+      <span class="param-label">Size</span>
+      <div class="slider-track">
+        <input type="range" id="sliderSize" min="5" max="15" step="1" value="5">
+      </div>
+      <span class="param-value" id="valSize">5×5</span>
     </div>
-    <span class="param-value" id="valSize">5×5</span>
-  </div>
-  <div class="param-row">
-    <span class="param-label">Density</span>
-    <div class="slider-track">
-      <input type="range" id="sliderDensity" min="20" max="80" step="5" value="50">
+    <div class="param-row">
+      <span class="param-label">Density</span>
+      <div class="slider-track">
+        <input type="range" id="sliderDensity" min="20" max="80" step="5" value="50">
+      </div>
+      <span class="param-value" id="valDensity">50%</span>
     </div>
-    <span class="param-value" id="valDensity">50%</span>
-  </div>
-  <div class="action-row">
-    <button id="btnGenerate">Generate</button>
-    <button id="btnSolve">Solve</button>
-    <div class="score-display">
-      <span id="scoreValue">—</span>
-      <span id="scoreLabel"></span>
+    <div class="action-row">
+      <button id="btnGenerate">Generate</button>
+      <button id="btnSolve">Solve</button>
+      <div class="score-display">
+        <span id="scoreValue">—</span>
+        <span id="scoreLabel"></span>
+      </div>
     </div>
+    <div id="scoreDetails"></div>
   </div>
-  <div id="scoreDetails"></div>
 </div>
 
-<div id="version">v1.0.2</div>
+<div id="version">v1.1.0</div>
 
 <script>
 // ═══════════════════════════════════════════════════════════
-// PICROSS v1.0.2 — Level Design Tool
+// PICROSS v1.1.0 — Level Design Tool
 // ═══════════════════════════════════════════════════════════
 
-const MAX_LIVES = 3;
+let MAX_LIVES = 3;
 let SOLUTION, GRID_SIZE, CLUES;
 let currentScore = 0;
 let lastGenInfo = null; // store generation details
@@ -467,8 +498,16 @@ function updateScoreDisplay(gen, elapsed) {
   elDetails.textContent = `${gen.iterations} iters · ${(gen.firstPassRatio*100).toFixed(0)}% first pass · ${(gen.density*100).toFixed(0)}% density · ${gen.attempts} att · ${elapsed.toFixed(0)}ms`;
 }
 
-elSize.addEventListener('input', updateSizeLabel);
-elDensity.addEventListener('input', updateDensityLabel);
+function onSliderChange() {
+  updateSizeLabel();
+  updateDensityLabel();
+  if (autoSolveTimer) { clearInterval(autoSolveTimer); autoSolveTimer = null; autoSolving = false; }
+  initGame();
+  resize();
+}
+
+elSize.addEventListener('input', onSliderChange);
+elDensity.addEventListener('input', onSliderChange);
 
 document.getElementById('btnGenerate').addEventListener('click', () => {
   if (autoSolveTimer) { clearInterval(autoSolveTimer); autoSolveTimer = null; autoSolving = false; }
@@ -477,6 +516,16 @@ document.getElementById('btnGenerate').addEventListener('click', () => {
 });
 
 document.getElementById('btnSolve').addEventListener('click', () => { autoSolve(); });
+
+// Panel toggle
+function togglePanel() {
+  const panel = document.getElementById('panel');
+  const toggle = document.getElementById('panel-toggle');
+  panel.classList.toggle('open');
+  toggle.classList.toggle('open');
+  // Wait for transition to finish then recalc layout
+  setTimeout(resize, 260);
+}
 
 // Init labels
 updateSizeLabel();
@@ -524,9 +573,9 @@ let endBtnRect = null;
 
 function resize() {
   const dpr = window.devicePixelRatio || 1;
-  const panelH = document.getElementById('panel').offsetHeight;
+  const wrapperH = document.getElementById('panel-wrapper').offsetHeight;
   canvasW = window.innerWidth;
-  canvasH = window.innerHeight - panelH;
+  canvasH = window.innerHeight - wrapperH;
   canvas.style.width = canvasW + 'px';
   canvas.style.height = canvasH + 'px';
   canvas.width = canvasW * dpr;
@@ -554,8 +603,14 @@ function computeLayout() {
 // GAME
 // ═══════════════════════════════════════════════════════════
 
+function livesForSize(size) {
+  // 5→3, 10→5, 15→7 (linear interpolation, rounded)
+  return Math.round(3 + (size - 5) * 4 / 10);
+}
+
 function initGame(keepPuzzle) {
   if (!keepPuzzle) newPuzzle();
+  MAX_LIVES = livesForSize(GRID_SIZE);
   grid = [];
   for (let r = 0; r < GRID_SIZE; r++) grid.push(new Array(GRID_SIZE).fill(0));
   won = false; lost = false;
