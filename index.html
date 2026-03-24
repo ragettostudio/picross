@@ -436,11 +436,12 @@ function validatePuzzle(solution) {
 // ═══════════════════════════════════════════════════════════
 
 function scoreDifficulty(size, iterations, firstPassRatio, density) {
-  const W1 = 45 * (iterations - 1) / (iterations + 2);
-  const W2 = 25 * (1 - firstPassRatio);
-  const W3 = 20 * Math.max(0, (size - 5) / 10);
-  const W4 = 10 * (1 - density); // low density = more error risk = harder
-  return Math.max(1, Math.min(100, Math.round(1 + W1 + W2 + W3 + W4)));
+  // Primary axes: size (0-40) + density (0-40), solver refinement (0-20)
+  // Big size + low density = hardest. Small size + high density = easiest.
+  const sizeScore = 40 * (size - 5) / 10;
+  const densityScore = 40 * (1 - density);
+  const solverScore = 15 * (iterations - 1) / (iterations + 2) + 5 * (1 - firstPassRatio);
+  return Math.max(1, Math.min(100, Math.round(1 + sizeScore + densityScore + solverScore)));
 }
 
 function gridDensity(grid) {
@@ -590,17 +591,21 @@ function resize() {
 }
 
 function computeLayout() {
-  const topM = 60, botM = 16, sideM = 16;
-  const maxRSep = Math.max(...CLUES.rows.map(c => c.length + Math.max(0, c.length - 1) * 0.5));
-  const maxCSep = Math.max(...CLUES.cols.map(c => c.length + Math.max(0, c.length - 1) * 0.5));
-  const csW = (canvasW - sideM * 2) / (GRID_SIZE + maxRSep * 0.9 + 0.5);
-  const csH = (canvasH - topM - botM - sideM * 2) / (GRID_SIZE + maxCSep * 0.8 + 0.5);
+  const topM = GRID_SIZE <= 10 ? 55 : 40, botM = 12, sideM = 10;
+  const maxRowLen = Math.max(...CLUES.rows.map(c => c.length));
+  const maxColLen = Math.max(...CLUES.cols.map(c => c.length));
+  // Tighter clue units: 0.5 per digit + 0.15 per separator + padding
+  const rowClueUnits = maxRowLen * 0.5 + Math.max(0, maxRowLen - 1) * 0.15 + 0.4;
+  const colClueUnits = maxColLen * 0.55 + Math.max(0, maxColLen - 1) * 0.15 + 0.3;
+  const csW = (canvasW - sideM * 2) / (GRID_SIZE + rowClueUnits);
+  const csH = (canvasH - topM - botM) / (GRID_SIZE + colClueUnits);
   cellSize = Math.floor(Math.min(csW, csH));
   cellSize = Math.max(cellSize, 20);
-  clueW = Math.floor(cellSize * (maxRSep * 0.9 + 0.3));
-  clueH = Math.floor(cellSize * (maxCSep * 0.8 + 0.3));
-  // Center the grid itself; clues hang to the left
-  gridX = Math.max(clueW + 8, Math.floor((canvasW - GRID_SIZE * cellSize) / 2));
+  clueW = Math.ceil(cellSize * rowClueUnits);
+  clueH = Math.ceil(cellSize * colClueUnits);
+  // Center the whole block (clues + grid)
+  const totalW = clueW + GRID_SIZE * cellSize;
+  gridX = Math.floor((canvasW - totalW) / 2) + clueW;
   gridY = topM + clueH;
 }
 
@@ -665,9 +670,11 @@ function drawGame(now, dt) {
 
   const gridCenterX = gridX + GRID_SIZE * cellSize / 2;
 
-  // Hearts
-  const heartSize = 36, heartGap = 12, heartsW = MAX_LIVES * (heartSize + heartGap) - heartGap;
-  const heartsX = Math.floor(gridCenterX - heartsW / 2), heartsY = 16;
+  // Hearts — scale down for large grids so they don't overlap clues
+  const heartSize = Math.max(18, Math.min(36, Math.floor((canvasW - 40) / MAX_LIVES - 8)));
+  const heartGap = Math.max(4, Math.floor(heartSize * 0.3));
+  const heartsW = MAX_LIVES * (heartSize + heartGap) - heartGap;
+  const heartsX = Math.floor(gridCenterX - heartsW / 2), heartsY = 10;
   const shakeX = anims.heartShake > 0 ? Math.sin(now / 30) * anims.heartShake * 4 : 0;
   for (let i = 0; i < MAX_LIVES; i++) {
     drawHeart(heartsX + i * (heartSize + heartGap) + shakeX, heartsY, heartSize, i < lives ? COLORS.heartFull : COLORS.heartEmpty);
