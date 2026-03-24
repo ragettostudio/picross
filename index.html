@@ -134,11 +134,11 @@
   <div id="scoreDetails"></div>
 </div>
 
-<div id="version">v1.0.0</div>
+<div id="version">v1.0.1</div>
 
 <script>
 // ═══════════════════════════════════════════════════════════
-// PICROSS v1.0.0 — Level Design Tool
+// PICROSS v1.0.1 — Level Design Tool
 // ═══════════════════════════════════════════════════════════
 
 const MAX_LIVES = 3;
@@ -545,8 +545,8 @@ function computeLayout() {
   cellSize = Math.max(cellSize, 20);
   clueW = Math.floor(cellSize * (maxRSep * 0.9 + 0.3));
   clueH = Math.floor(cellSize * (maxCSep * 0.8 + 0.3));
-  const totalW = clueW + GRID_SIZE * cellSize;
-  gridX = Math.floor((canvasW - totalW) / 2) + clueW;
+  // Center the grid itself; clues hang to the left
+  gridX = Math.max(clueW + 8, Math.floor((canvasW - GRID_SIZE * cellSize) / 2));
   gridY = topM + clueH;
 }
 
