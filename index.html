@@ -498,16 +498,21 @@ function updateScoreDisplay(gen, elapsed) {
   elDetails.textContent = `${gen.iterations} iters · ${(gen.firstPassRatio*100).toFixed(0)}% first pass · ${(gen.density*100).toFixed(0)}% density · ${gen.attempts} att · ${elapsed.toFixed(0)}ms`;
 }
 
-function onSliderChange() {
+function previewScore() {
   updateSizeLabel();
   updateDensityLabel();
-  if (autoSolveTimer) { clearInterval(autoSolveTimer); autoSolveTimer = null; autoSolving = false; }
-  initGame();
-  resize();
+  const size = parseInt(elSize.value);
+  const targetD = parseInt(elDensity.value) / 100;
+  const t0 = performance.now();
+  const gen = generatePuzzleWithDensity(size, targetD, 0.05);
+  const elapsed = performance.now() - t0;
+  if (gen) {
+    updateScoreDisplay(gen, elapsed);
+  }
 }
 
-elSize.addEventListener('input', onSliderChange);
-elDensity.addEventListener('input', onSliderChange);
+elSize.addEventListener('input', previewScore);
+elDensity.addEventListener('input', previewScore);
 
 document.getElementById('btnGenerate').addEventListener('click', () => {
   if (autoSolveTimer) { clearInterval(autoSolveTimer); autoSolveTimer = null; autoSolving = false; }
