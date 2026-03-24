@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Picross — Level Designer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #1a1a2e;
+    display: flex; flex-direction: column;
+    align-items: center;
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    color: #ccc;
+  }
+  #game { flex: 1; min-height: 0; }
+  #version {
+    position: fixed; bottom: 8px; right: 12px;
+    color: #555; font-size: 14px; font-family: monospace;
+    z-index: 10;
+  }
+
+  /* ── Level Design Panel ── */
+  #panel {
+    width: 100%; max-width: 520px;
+    background: #111827;
+    border-top: 1px solid #1f2937;
+    padding: 14px 20px 12px;
+    flex-shrink: 0;
+  }
+  .param-row {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 8px;
+  }
+  .param-label {
+    width: 54px; font-size: 11px; color: #9ca3af;
+    text-transform: uppercase; letter-spacing: 0.5px; flex-shrink: 0;
+    text-align: right;
+  }
+  .param-value {
+    width: 52px; font-size: 13px; color: #e5e7eb;
+    font-variant-numeric: tabular-nums; text-align: left; flex-shrink: 0;
+  }
+  .slider-track {
+    flex: 1; position: relative; height: 24px;
+    display: flex; align-items: center;
+  }
+  input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 4px; border-radius: 2px;
+    background: #374151; outline: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #e2b714; cursor: pointer;
+    border: 2px solid #1a1a2e;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #e2b714; cursor: pointer;
+    border: 2px solid #1a1a2e;
+  }
+
+  /* Score + Generate row */
+  .action-row {
+    display: flex; align-items: center; gap: 12px;
+    margin-top: 10px; padding-top: 10px;
+    border-top: 1px solid #1f2937;
+  }
+  #btnGenerate {
+    padding: 8px 20px; border: none; border-radius: 6px;
+    background: #e2b714; color: #1a1a2e;
+    font-weight: 700; font-size: 13px; cursor: pointer;
+    letter-spacing: 0.3px; flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  #btnGenerate:hover { background: #f5cc2a; }
+  #btnGenerate:active { background: #c9a30f; }
+  #btnSolve {
+    padding: 6px 12px; border: 1px solid #374151; border-radius: 4px;
+    background: transparent; color: #9ca3af;
+    font-size: 11px; cursor: pointer; flex-shrink: 0;
+  }
+  #btnSolve:hover { border-color: #6b7280; color: #d1d5db; }
+  .score-display {
+    flex: 1; display: flex; align-items: baseline; gap: 8px;
+  }
+  #scoreValue {
+    font-size: 22px; font-weight: 800; color: #e2b714;
+    font-variant-numeric: tabular-nums;
+  }
+  #scoreLabel {
+    font-size: 12px; font-weight: 600; color: #6b7280;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  #scoreDetails {
+    font-size: 10px; color: #4b5563;
+    margin-top: 2px;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+
+<div id="panel">
+  <div class="param-row">
+    <span class="param-label">Size</span>
+    <div class="slider-track">
+      <input type="range" id="sliderSize" min="5" max="15" step="1" value="5">
+    </div>
+    <span class="param-value" id="valSize">5×5</span>
+  </div>
+  <div class="param-row">
+    <span class="param-label">Density</span>
+    <div class="slider-track">
+      <input type="range" id="sliderDensity" min="20" max="80" step="5" value="50">
+    </div>
+    <span class="param-value" id="valDensity">50%</span>
+  </div>
+  <div class="action-row">
+    <button id="btnGenerate">Generate</button>
+    <button id="btnSolve">Solve</button>
+    <div class="score-display">
+      <span id="scoreValue">—</span>
+      <span id="scoreLabel"></span>
+    </div>
+  </div>
+  <div id="scoreDetails"></div>
+</div>
+
+<div id="version">v1.0.0</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// PICROSS v1.0.0 — Level Design Tool
+// ═══════════════════════════════════════════════════════════
+
+const MAX_LIVES = 3;
+let SOLUTION, GRID_SIZE, CLUES;
+let currentScore = 0;
+let lastGenInfo = null; // store generation details
+
+function deriveClues(g) {
+  const rows = [], cols = [];
+  for (let r = 0; r < g.length; r++) rows.push(lineClue(g[r]));
+  for (let c = 0; c < g[0].length; c++) {
+    const col = [];
+    for (let r = 0; r < g.length; r++) col.push(g[r][c]);
+    cols.push(lineClue(col));
+  }
+  return { rows, cols };
+}
+function lineClue(line) {
+  const c = []; let n = 0;
+  for (const v of line) { if (v===1) n++; else if (n>0) { c.push(n); n=0; } }
+  if (n>0) c.push(n);
+  return c.length ? c : [0];
+}
+
+// ═══════════════════════════════════════════════════════════
+// PUZZLE GENERATOR
+// ═══════════════════════════════════════════════════════════
+
+function generateRandomGrid(size, minDensity, maxDensity) {
+  const density = minDensity + Math.random() * (maxDensity - minDensity);
+  const grid = [];
+  for (let r = 0; r < size; r++) {
+    const row = [];
+    for (let c = 0; c < size; c++) row.push(Math.random() < density ? 1 : 0);
+    grid.push(row);
+  }
+  return grid;
+}
+
+function isNonTrivial(grid) {
+  const size = grid.length;
+  for (let r = 0; r < size; r++) {
+    if (grid[r].every(c => c === 0)) return false;
+  }
+  for (let c = 0; c < size; c++) {
+    let hasOne = false;
+    for (let r = 0; r < size; r++) { if (grid[r][c] === 1) { hasOne = true; break; } }
+    if (!hasOne) return false;
+  }
+  const total = size * size;
+  const filled = grid.flat().filter(v => v === 1).length;
+  if (filled / total < 0.2) return false;
+  return true;
+}
+
+function generatePuzzle(size, minDensity, maxDensity, maxAttempts, targetDifficulty, tolerance) {
+  maxAttempts = maxAttempts || 500;
+  tolerance = tolerance || 5;
+  let bestCandidate = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const candidate = generateRandomGrid(size, minDensity, maxDensity);
+    if (!isNonTrivial(candidate)) continue;
+    const clues = deriveClues(candidate);
+    const result = solvePuzzle(clues, size);
+    if (!result.solved) continue;
+
+    const density = gridDensity(candidate);
+    const score = scoreDifficulty(size, result.iterations, result.firstPassRatio, density);
+    const info = { solution: candidate, clues, attempts: attempt + 1, score, iterations: result.iterations, firstPassRatio: result.firstPassRatio, density };
+
+    if (targetDifficulty == null) return info;
+    if (Math.abs(score - targetDifficulty) <= tolerance) return info;
+
+    if (!bestCandidate || Math.abs(score - targetDifficulty) < Math.abs(bestCandidate.score - targetDifficulty)) {
+      bestCandidate = info;
+      bestCandidate.attempts = attempt + 1;
+    }
+  }
+  return bestCandidate || null;
+}
+
+// Generate puzzle targeting a specific density (±tolerance)
+function generatePuzzleWithDensity(size, targetDensity, densityTolerance, maxAttempts) {
+  maxAttempts = maxAttempts || 500;
+  let bestCandidate = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const candidate = generateRandomGrid(size, targetDensity, targetDensity);
+    if (!isNonTrivial(candidate)) continue;
+    const actualDensity = gridDensity(candidate);
+    if (Math.abs(actualDensity - targetDensity) > densityTolerance) continue;
+    const clues = deriveClues(candidate);
+    const result = solvePuzzle(clues, size);
+    if (!result.solved) continue;
+
+    const score = scoreDifficulty(size, result.iterations, result.firstPassRatio, actualDensity);
+    const info = { solution: candidate, clues, attempts: attempt + 1, score, iterations: result.iterations, firstPassRatio: result.firstPassRatio, density: actualDensity };
+
+    // Return first match — density is already filtered
+    return info;
+  }
+  // Fallback: relax tolerance and return best we found
+  return generatePuzzle(size, Math.max(0.2, targetDensity - 0.1), Math.min(0.8, targetDensity + 0.1));
+}
+
+function newPuzzle() {
+  const size = parseInt(document.getElementById('sliderSize').value);
+  const targetD = parseInt(document.getElementById('sliderDensity').value) / 100;
+  // Generate with exact target density, filter by actual density within ±5%
+  const minD = targetD;
+  const maxD = targetD;
+
+  const t0 = performance.now();
+  const gen = generatePuzzleWithDensity(size, targetD, 0.05);
+  const elapsed = performance.now() - t0;
+
+  if (gen) {
+    SOLUTION = gen.solution;
+    GRID_SIZE = size;
+    CLUES = deriveClues(SOLUTION);
+    currentScore = gen.score;
+    lastGenInfo = gen;
+    updateScoreDisplay(gen, elapsed);
+    console.log(`Generated ${size}×${size} puzzle — score ${gen.score}/100, ${gen.iterations} iters, firstPass ${(gen.firstPassRatio*100).toFixed(0)}%, density ${(gen.density*100).toFixed(0)}%, ${gen.attempts} attempts (${elapsed.toFixed(0)}ms)`);
+  } else {
+    SOLUTION = [[0,1,0,1,0],[1,1,1,1,1],[1,1,1,1,1],[0,1,1,1,0],[0,0,1,0,0]];
+    GRID_SIZE = 5;
+    CLUES = deriveClues(SOLUTION);
+    currentScore = 1;
+    lastGenInfo = null;
+    updateScoreDisplay(null, 0);
+    console.warn('Failed to generate puzzle, using fallback');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// LINE SOLVER
+// ═══════════════════════════════════════════════════════════
+
+function generateArrangements(clues, length, known) {
+  if (clues.length === 1 && clues[0] === 0) {
+    for (let i = 0; i < length; i++) {
+      if (known[i] === 1) return [];
+    }
+    return [new Array(length).fill(0)];
+  }
+
+  const results = [];
+
+  function place(groupIdx, pos, current) {
+    if (groupIdx === clues.length) {
+      for (let i = pos; i < length; i++) {
+        if (known[i] === 1) return;
+        current.push(0);
+      }
+      results.push(current);
+      return;
+    }
+
+    const groupLen = clues[groupIdx];
+    const minSpaceNeeded = clues.slice(groupIdx + 1).reduce((a, b) => a + b + 1, 0);
+    const maxStart = length - groupLen - minSpaceNeeded;
+
+    for (let start = pos; start <= maxStart; start++) {
+      let valid = true;
+      for (let i = pos; i < start; i++) {
+        if (known[i] === 1) { valid = false; break; }
+      }
+      if (!valid) break;
+
+      for (let i = start; i < start + groupLen; i++) {
+        if (known[i] === 0) { valid = false; break; }
+      }
+      if (!valid) continue;
+
+      if (groupIdx < clues.length - 1) {
+        const gapPos = start + groupLen;
+        if (gapPos < length && known[gapPos] === 1) continue;
+      }
+
+      const partial = current.slice();
+      for (let i = pos; i < start; i++) partial.push(0);
+      for (let i = 0; i < groupLen; i++) partial.push(1);
+      if (groupIdx < clues.length - 1) {
+        partial.push(0);
+        place(groupIdx + 1, start + groupLen + 1, partial);
+      } else {
+        place(groupIdx + 1, start + groupLen, partial);
+      }
+    }
+  }
+
+  place(0, 0, []);
+  return results;
+}
+
+function solveLine(clues, known) {
+  const arrangements = generateArrangements(clues, known.length, known);
+  if (arrangements.length === 0) return null;
+
+  const result = known.slice();
+  for (let i = 0; i < known.length; i++) {
+    if (result[i] !== -1) continue;
+    const first = arrangements[0][i];
+    const allSame = arrangements.every(a => a[i] === first);
+    if (allSame) result[i] = first;
+  }
+  return result;
+}
+
+function solvePuzzle(clues, size) {
+  const grid = [];
+  for (let r = 0; r < size; r++) grid.push(new Array(size).fill(-1));
+
+  let changed = true;
+  let iterations = 0;
+  let firstPassRatio = 0;
+  const totalCells = size * size;
+  const maxIter = size * 10;
+
+  while (changed && iterations < maxIter) {
+    changed = false;
+    iterations++;
+
+    for (let r = 0; r < size; r++) {
+      const row = grid[r];
+      const solved = solveLine(clues.rows[r], row);
+      if (solved === null) return { solved: false, grid, iterations, firstPassRatio, error: 'contradiction in row ' + r };
+      for (let c = 0; c < size; c++) {
+        if (row[c] === -1 && solved[c] !== -1) { grid[r][c] = solved[c]; changed = true; }
+      }
+    }
+
+    for (let c = 0; c < size; c++) {
+      const col = [];
+      for (let r = 0; r < size; r++) col.push(grid[r][c]);
+      const solved = solveLine(clues.cols[c], col);
+      if (solved === null) return { solved: false, grid, iterations, firstPassRatio, error: 'contradiction in col ' + c };
+      for (let r = 0; r < size; r++) {
+        if (grid[r][c] === -1 && solved[r] !== -1) { grid[r][c] = solved[r]; changed = true; }
+      }
+    }
+
+    if (iterations === 1) {
+      let determined = 0;
+      for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) if (grid[r][c] !== -1) determined++;
+      firstPassRatio = determined / totalCells;
+    }
+  }
+
+  const isSolved = grid.every(row => row.every(cell => cell !== -1));
+  return { solved: isSolved, grid, iterations, firstPassRatio };
+}
+
+function validatePuzzle(solution) {
+  const size = solution.length;
+  const clues = deriveClues(solution);
+  return solvePuzzle(clues, size);
+}
+
+// ═══════════════════════════════════════════════════════════
+// DIFFICULTY SCORING — 4-component formula, scale 1-100
+// ═══════════════════════════════════════════════════════════
+
+function scoreDifficulty(size, iterations, firstPassRatio, density) {
+  const W1 = 45 * (iterations - 1) / (iterations + 2);
+  const W2 = 25 * (1 - firstPassRatio);
+  const W3 = 20 * Math.max(0, (size - 5) / 10);
+  const W4 = 10 * (1 - density); // low density = more error risk = harder
+  return Math.max(1, Math.min(100, Math.round(1 + W1 + W2 + W3 + W4)));
+}
+
+function gridDensity(grid) {
+  const size = grid.length;
+  let filled = 0;
+  for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) if (grid[r][c] === 1) filled++;
+  return filled / (size * size);
+}
+
+function difficultyLabel(score) {
+  if (score <= 15) return 'TUTO';
+  if (score <= 30) return 'FACILE';
+  if (score <= 50) return 'MOYEN';
+  if (score <= 70) return 'DUR';
+  if (score <= 85) return 'TRÈS DUR';
+  return 'EXPERT';
+}
+
+// ═══════════════════════════════════════════════════════════
+// PANEL CONTROLS
+// ═══════════════════════════════════════════════════════════
+
+const elSize = document.getElementById('sliderSize');
+const elDensity = document.getElementById('sliderDensity');
+const elValSize = document.getElementById('valSize');
+const elValDensity = document.getElementById('valDensity');
+
+function updateSizeLabel() {
+  elValSize.textContent = elSize.value + '×' + elSize.value;
+}
+
+function updateDensityLabel() {
+  elValDensity.textContent = elDensity.value + '%';
+}
+
+function updateScoreDisplay(gen, elapsed) {
+  const elScore = document.getElementById('scoreValue');
+  const elLabel = document.getElementById('scoreLabel');
+  const elDetails = document.getElementById('scoreDetails');
+
+  if (!gen) {
+    elScore.textContent = '—';
+    elLabel.textContent = '';
+    elDetails.textContent = '';
+    return;
+  }
+
+  elScore.textContent = gen.score + '/100';
+  elLabel.textContent = difficultyLabel(gen.score);
+
+  // Color the label by difficulty
+  const colors = { TUTO: '#4ade80', FACILE: '#86efac', MOYEN: '#fbbf24', DUR: '#f97316', 'TRÈS DUR': '#ef4444', EXPERT: '#dc2626' };
+  elLabel.style.color = colors[difficultyLabel(gen.score)] || '#6b7280';
+
+  elDetails.textContent = `${gen.iterations} iters · ${(gen.firstPassRatio*100).toFixed(0)}% first pass · ${(gen.density*100).toFixed(0)}% density · ${gen.attempts} att · ${elapsed.toFixed(0)}ms`;
+}
+
+elSize.addEventListener('input', updateSizeLabel);
+elDensity.addEventListener('input', updateDensityLabel);
+
+document.getElementById('btnGenerate').addEventListener('click', () => {
+  if (autoSolveTimer) { clearInterval(autoSolveTimer); autoSolveTimer = null; autoSolving = false; }
+  initGame();
+  resize();
+});
+
+document.getElementById('btnSolve').addEventListener('click', () => { autoSolve(); });
+
+// Init labels
+updateSizeLabel();
+updateDensityLabel();
+
+// ═══════════════════════════════════════════════════════════
+// CANVAS & RENDERING
+// ═══════════════════════════════════════════════════════════
+
+const COLORS = {
+  bg: '#1a1a2e', gridBg: '#16213e', gridLine: '#0f3460', gridBorder: '#e2b714',
+  filled: '#3B82F6', xMark: '#e94560', xMarkBg: 'rgba(233,69,96,0.08)',
+  clueText: '#ddd', clueDone: '#555', clueStrike: '#555',
+  heartFull: '#e94560', heartEmpty: '#333',
+};
+
+let grid = [], won = false, lost = false;
+let lives = MAX_LIVES;
+
+let anims = {
+  highlightRow: -1, highlightCol: -1, highlightAlpha: 0,
+  errorCells: [], strikeRows: [], strikeCols: [],
+  completedRows: [], completedCols: [],
+  successCells: [], heartShake: 0,
+};
+
+// ── Audio ──
+let audioCtx = null;
+function ensureAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+function playChime(f, d) {
+  try { ensureAudio(); const o=audioCtx.createOscillator(),g=audioCtx.createGain(); o.connect(g);g.connect(audioCtx.destination); o.frequency.value=f;o.type='sine'; g.gain.setValueAtTime(0.12,audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+d); o.start();o.stop(audioCtx.currentTime+d); } catch(e) {}
+}
+function playFill() { playChime(600, 0.08); }
+function playMark() { playChime(300, 0.06); }
+function playComplete() { playChime(800, 0.3); }
+function playError() { playChime(200, 0.2); playChime(150, 0.3); }
+function playWin() { [0,150,300,450].forEach((d,i) => setTimeout(()=>playChime(500+i*150,0.4),d)); }
+function playLose() { [0,200,400].forEach((d,i) => setTimeout(()=>playChime(300-i*60,0.3),d)); }
+
+// ── Canvas ──
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let canvasW, canvasH, cellSize, clueW, clueH, gridX, gridY;
+let endBtnRect = null;
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const panelH = document.getElementById('panel').offsetHeight;
+  canvasW = window.innerWidth;
+  canvasH = window.innerHeight - panelH;
+  canvas.style.width = canvasW + 'px';
+  canvas.style.height = canvasH + 'px';
+  canvas.width = canvasW * dpr;
+  canvas.height = canvasH * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  computeLayout();
+}
+
+function computeLayout() {
+  const topM = 60, botM = 16, sideM = 16;
+  const maxRSep = Math.max(...CLUES.rows.map(c => c.length + Math.max(0, c.length - 1) * 0.5));
+  const maxCSep = Math.max(...CLUES.cols.map(c => c.length + Math.max(0, c.length - 1) * 0.5));
+  const csW = (canvasW - sideM * 2) / (GRID_SIZE + maxRSep * 0.9 + 0.5);
+  const csH = (canvasH - topM - botM - sideM * 2) / (GRID_SIZE + maxCSep * 0.8 + 0.5);
+  cellSize = Math.floor(Math.min(csW, csH, 80));
+  cellSize = Math.max(cellSize, 20);
+  clueW = Math.floor(cellSize * (maxRSep * 0.9 + 0.3));
+  clueH = Math.floor(cellSize * (maxCSep * 0.8 + 0.3));
+  const totalW = clueW + GRID_SIZE * cellSize;
+  gridX = Math.floor((canvasW - totalW) / 2) + clueW;
+  gridY = topM + clueH;
+}
+
+// ═══════════════════════════════════════════════════════════
+// GAME
+// ═══════════════════════════════════════════════════════════
+
+function initGame(keepPuzzle) {
+  if (!keepPuzzle) newPuzzle();
+  grid = [];
+  for (let r = 0; r < GRID_SIZE; r++) grid.push(new Array(GRID_SIZE).fill(0));
+  won = false; lost = false;
+  lives = MAX_LIVES;
+  anims = {
+    highlightRow: -1, highlightCol: -1, highlightAlpha: 0,
+    errorCells: [], strikeRows: new Array(GRID_SIZE).fill(0), strikeCols: new Array(GRID_SIZE).fill(0),
+    completedRows: new Array(GRID_SIZE).fill(false), completedCols: new Array(GRID_SIZE).fill(false),
+    successCells: [], heartShake: 0,
+  };
+  endBtnRect = null;
+  computeLayout();
+}
+
+function isRowCorrect(r) { for (let c = 0; c < GRID_SIZE; c++) if ((grid[r][c]===1) !== (SOLUTION[r][c]===1)) return false; return true; }
+function isColCorrect(c) { for (let r = 0; r < GRID_SIZE; r++) if ((grid[r][c]===1) !== (SOLUTION[r][c]===1)) return false; return true; }
+
+function checkLineCompletions() {
+  for (let r = 0; r < GRID_SIZE; r++) { const ok = isRowCorrect(r); if (ok && !anims.completedRows[r]) { anims.completedRows[r] = true; playComplete(); } else if (!ok && anims.completedRows[r]) { anims.completedRows[r] = false; anims.strikeRows[r] = 0; } }
+  for (let c = 0; c < GRID_SIZE; c++) { const ok = isColCorrect(c); if (ok && !anims.completedCols[c]) anims.completedCols[c] = true; else if (!ok && anims.completedCols[c]) { anims.completedCols[c] = false; anims.strikeCols[c] = 0; } }
+}
+
+function checkWin() {
+  for (let r = 0; r < GRID_SIZE; r++) for (let c = 0; c < GRID_SIZE; c++) if ((grid[r][c]===1) !== (SOLUTION[r][c]===1)) return;
+  won = true; playWin();
+  for (let r = 0; r < GRID_SIZE; r++) for (let c = 0; c < GRID_SIZE; c++) if (SOLUTION[r][c]===1) anims.successCells.push({ r, c, start: performance.now() });
+}
+
+// ── Render ──
+let lastFrame = 0;
+function render(now) {
+  requestAnimationFrame(render);
+  const dt = Math.min(now - lastFrame, 50); lastFrame = now;
+  drawGame(now, dt);
+}
+
+function drawGame(now, dt) {
+  ctx.fillStyle = COLORS.bg; ctx.fillRect(0, 0, canvasW, canvasH);
+
+  // Anim updates
+  if (anims.highlightAlpha > 0) anims.highlightAlpha = Math.max(0, anims.highlightAlpha - dt / 900);
+  if (anims.heartShake > 0) anims.heartShake = Math.max(0, anims.heartShake - dt / 300);
+  const ss = dt / 200;
+  for (let r = 0; r < GRID_SIZE; r++) if (anims.completedRows[r] && anims.strikeRows[r] < 1) anims.strikeRows[r] = Math.min(1, anims.strikeRows[r] + ss);
+  for (let c = 0; c < GRID_SIZE; c++) if (anims.completedCols[c] && anims.strikeCols[c] < 1) anims.strikeCols[c] = Math.min(1, anims.strikeCols[c] + ss);
+  anims.errorCells = anims.errorCells.filter(e => { e.alpha = Math.max(0, 1 - (now - e.startTime) / 500); return e.alpha > 0; });
+
+  const gridCenterX = gridX + GRID_SIZE * cellSize / 2;
+
+  // Hearts
+  const heartSize = 36, heartGap = 12, heartsW = MAX_LIVES * (heartSize + heartGap) - heartGap;
+  const heartsX = Math.floor(gridCenterX - heartsW / 2), heartsY = 16;
+  const shakeX = anims.heartShake > 0 ? Math.sin(now / 30) * anims.heartShake * 4 : 0;
+  for (let i = 0; i < MAX_LIVES; i++) {
+    drawHeart(heartsX + i * (heartSize + heartGap) + shakeX, heartsY, heartSize, i < lives ? COLORS.heartFull : COLORS.heartEmpty);
+  }
+
+  // Grid background
+  ctx.fillStyle = COLORS.gridBg; ctx.fillRect(gridX, gridY, GRID_SIZE * cellSize, GRID_SIZE * cellSize);
+
+  // Cells
+  for (let r = 0; r < GRID_SIZE; r++) for (let c = 0; c < GRID_SIZE; c++) {
+    const x = gridX + c * cellSize, y = gridY + r * cellSize;
+    if (grid[r][c] === 1) { ctx.fillStyle = COLORS.filled; ctx.beginPath(); roundRect(ctx, x+2, y+2, cellSize-4, cellSize-4, 4); ctx.fill(); }
+    else if (grid[r][c] === 2) { ctx.fillStyle = COLORS.xMarkBg; ctx.fillRect(x+2, y+2, cellSize-4, cellSize-4); const p = cellSize*0.28; ctx.strokeStyle = COLORS.xMark; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(x+p, y+p); ctx.lineTo(x+cellSize-p, y+cellSize-p); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x+cellSize-p, y+p); ctx.lineTo(x+p, y+cellSize-p); ctx.stroke(); }
+  }
+
+  // Grid lines
+  ctx.strokeStyle = COLORS.gridLine; ctx.lineWidth = 1;
+  for (let i = 0; i <= GRID_SIZE; i++) { ctx.beginPath(); ctx.moveTo(gridX + i*cellSize, gridY); ctx.lineTo(gridX + i*cellSize, gridY + GRID_SIZE*cellSize); ctx.stroke(); ctx.beginPath(); ctx.moveTo(gridX, gridY + i*cellSize); ctx.lineTo(gridX + GRID_SIZE*cellSize, gridY + i*cellSize); ctx.stroke(); }
+  ctx.strokeStyle = COLORS.gridBorder; ctx.lineWidth = 2; ctx.strokeRect(gridX, gridY, GRID_SIZE*cellSize, GRID_SIZE*cellSize);
+
+  // Highlight
+  if (anims.highlightAlpha > 0 && !won && !lost) {
+    const a = anims.highlightAlpha * 0.15;
+    if (anims.highlightRow >= 0) { ctx.fillStyle = `rgba(59,130,246,${a})`; ctx.fillRect(gridX, gridY + anims.highlightRow*cellSize, GRID_SIZE*cellSize, cellSize); }
+    if (anims.highlightCol >= 0) { ctx.fillStyle = `rgba(59,130,246,${a})`; ctx.fillRect(gridX + anims.highlightCol*cellSize, gridY, cellSize, GRID_SIZE*cellSize); }
+  }
+
+  // Clues
+  const fs = Math.max(14, Math.floor(cellSize * 0.42));
+  const sepFs = Math.floor(fs * 0.7);
+
+  // Row clues
+  for (let r = 0; r < GRID_SIZE; r++) {
+    const done = anims.completedRows[r], clue = CLUES.rows[r], cy = gridY + r*cellSize + cellSize/2;
+    const parts = [];
+    for (let i = 0; i < clue.length; i++) { parts.push({ text: clue[i].toString(), font: `700 ${fs}px system-ui,sans-serif`, color: done ? COLORS.clueDone : COLORS.clueText }); if (i < clue.length-1) parts.push({ text: '|', font: `400 ${sepFs}px system-ui,sans-serif`, color: done ? '#444' : '#666' }); }
+    let tw = 0; for (const p of parts) { ctx.font = p.font; tw += ctx.measureText(p.text).width + 2; }
+    let cx2 = gridX - 8; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (let i = parts.length-1; i >= 0; i--) { ctx.font = parts[i].font; ctx.fillStyle = parts[i].color; const w = ctx.measureText(parts[i].text).width; ctx.fillText(parts[i].text, cx2, cy); cx2 -= w + 2; }
+    if (done && anims.strikeRows[r] > 0) { const sx2 = gridX-8-tw, ex = gridX-8; ctx.strokeStyle = COLORS.clueStrike; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sx2, cy); ctx.lineTo(sx2 + (ex-sx2)*anims.strikeRows[r], cy); ctx.stroke(); }
+  }
+
+  // Column clues
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  for (let c = 0; c < GRID_SIZE; c++) {
+    const done = anims.completedCols[c], clue = CLUES.cols[c], cx = gridX + c*cellSize + cellSize/2;
+    const lineH = fs * 1.3;
+    let slot = 0;
+    for (let i = clue.length-1; i >= 0; i--) {
+      const cy2 = gridY - slot*lineH*0.6 - 6;
+      ctx.font = `700 ${fs}px system-ui,sans-serif`; ctx.fillStyle = done ? COLORS.clueDone : COLORS.clueText;
+      ctx.fillText(clue[i].toString(), cx, cy2); slot++;
+      if (i > 0) { const sy = gridY - slot*lineH*0.6 - 6; ctx.font = `400 ${sepFs}px system-ui,sans-serif`; ctx.fillStyle = done ? '#444' : '#666'; ctx.fillText('|', cx, sy); slot++; }
+    }
+    if (done && anims.strikeCols[c] > 0) { const th = slot*lineH*0.6, sy2 = gridY-th-6, ey = gridY-6; ctx.strokeStyle = COLORS.clueStrike; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx, sy2); ctx.lineTo(cx, sy2 + (ey-sy2)*anims.strikeCols[c]); ctx.stroke(); }
+  }
+
+  // Error flash
+  for (const e of anims.errorCells) { ctx.fillStyle = `rgba(220,70,70,${e.alpha*0.5})`; ctx.fillRect(gridX + e.c*cellSize, gridY + e.r*cellSize, cellSize, cellSize); }
+
+  // Success glow
+  for (const s of anims.successCells) { const el = now-s.start; const p = Math.max(0, Math.sin(el/300)*Math.exp(-el/2000)); if (p > 0) { ctx.fillStyle = `rgba(90,200,120,${p*0.3})`; ctx.fillRect(gridX + s.c*cellSize, gridY + s.r*cellSize, cellSize, cellSize); } }
+
+  // Overlay positioning
+  const gridBottom = gridY + GRID_SIZE * cellSize;
+  const overlaySpace = canvasH - gridBottom;
+  const overlayY = gridBottom + Math.floor(overlaySpace / 2);
+
+  // Win overlay
+  if (won) {
+    ctx.fillStyle = 'rgba(26,26,46,0.6)'; ctx.fillRect(0, 0, canvasW, canvasH);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#e2b714'; ctx.font = '700 28px system-ui,sans-serif';
+    ctx.fillText('Puzzle Complete!', gridCenterX, overlayY - 45);
+    const rh = lives === MAX_LIVES ? 'Perfect — no mistakes!' : lives + ' heart' + (lives > 1 ? 's' : '') + ' remaining';
+    ctx.fillStyle = lives === MAX_LIVES ? '#4ade80' : '#aaa'; ctx.font = '400 16px system-ui,sans-serif';
+    ctx.fillText(rh, gridCenterX, overlayY - 12);
+    const pw = 180, ph = 48, px = Math.floor(gridCenterX - pw/2), py = overlayY + 10;
+    ctx.fillStyle = '#e2b714'; ctx.beginPath(); roundRect(ctx, px, py, pw, ph, 10); ctx.fill();
+    ctx.fillStyle = '#1a1a2e'; ctx.font = '700 16px system-ui,sans-serif'; ctx.fillText('Play Again', gridCenterX, py + ph/2);
+    endBtnRect = { x: px, y: py, w: pw, h: ph };
+  }
+
+  // Game Over overlay
+  if (lost) {
+    ctx.fillStyle = 'rgba(26,26,46,0.75)'; ctx.fillRect(0, 0, canvasW, canvasH);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#e94560'; ctx.font = '700 28px system-ui,sans-serif';
+    ctx.fillText('Game Over', gridCenterX, overlayY - 45);
+    ctx.fillStyle = '#aaa'; ctx.font = '400 16px system-ui,sans-serif';
+    ctx.fillText('3 mistakes — puzzle failed', gridCenterX, overlayY - 12);
+    const pw = 180, ph = 48, px = Math.floor(gridCenterX - pw/2), py = overlayY + 10;
+    ctx.fillStyle = '#e94560'; ctx.beginPath(); roundRect(ctx, px, py, pw, ph, 10); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = '700 16px system-ui,sans-serif'; ctx.fillText('Try Again', gridCenterX, py + ph/2);
+    endBtnRect = { x: px, y: py, w: pw, h: ph };
+  }
+}
+
+function drawHeart(x, y, size, color) {
+  ctx.fillStyle = color; ctx.save();
+  ctx.translate(x + size/2, y + size/2);
+  const s = size / 16;
+  ctx.beginPath();
+  ctx.moveTo(0, 3*s);
+  ctx.bezierCurveTo(-1*s, -2*s, -8*s, -2*s, -8*s, 3*s);
+  ctx.bezierCurveTo(-8*s, 8*s, 0, 12*s, 0, 14*s);
+  ctx.bezierCurveTo(0, 12*s, 8*s, 8*s, 8*s, 3*s);
+  ctx.bezierCurveTo(8*s, -2*s, 1*s, -2*s, 0, 3*s);
+  ctx.closePath(); ctx.fill(); ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r) { ctx.moveTo(x+r, y); ctx.lineTo(x+w-r, y); ctx.quadraticCurveTo(x+w, y, x+w, y+r); ctx.lineTo(x+w, y+h-r); ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h); ctx.lineTo(x+r, y+h); ctx.quadraticCurveTo(x, y+h, x, y+h-r); ctx.lineTo(x, y+r); ctx.quadraticCurveTo(x, y, x+r, y); ctx.closePath(); }
+
+// ── Input ──
+function getPos(e) { const r = canvas.getBoundingClientRect(); let cx, cy; if (e.touches && e.touches.length > 0) { cx = e.touches[0].clientX; cy = e.touches[0].clientY; } else if (e.changedTouches && e.changedTouches.length > 0) { cx = e.changedTouches[0].clientX; cy = e.changedTouches[0].clientY; } else { cx = e.clientX; cy = e.clientY; } return { x: cx - r.left, y: cy - r.top }; }
+function inRect(x, y, rx, ry, rw, rh) { return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh; }
+
+let pressTimer = null, pressCell = null, isLongPress = false;
+
+function handleTap(row, col) {
+  if (won || lost || autoSolving) return;
+  if (grid[row][col] === 0) {
+    if (SOLUTION[row][col] === 1) { grid[row][col] = 1; playFill(); }
+    else { lives--; anims.errorCells.push({ r: row, c: col, alpha: 1, startTime: performance.now() }); anims.heartShake = 1; playError(); if (lives <= 0) { lost = true; playLose(); return; } }
+  } else if (grid[row][col] === 1) { grid[row][col] = 0; playMark(); }
+  else if (grid[row][col] === 2) { grid[row][col] = 0; playMark(); }
+  anims.highlightRow = row; anims.highlightCol = col; anims.highlightAlpha = 1;
+  checkLineCompletions(); checkWin();
+}
+
+function handleLongPress(row, col) {
+  if (won || lost || autoSolving) return;
+  if (grid[row][col] === 0) { grid[row][col] = 2; playMark(); }
+  else if (grid[row][col] === 2) { grid[row][col] = 0; playMark(); }
+  else if (grid[row][col] === 1) { grid[row][col] = 0; playMark(); }
+  anims.highlightRow = row; anims.highlightCol = col; anims.highlightAlpha = 1;
+  checkLineCompletions();
+}
+
+function handleClick(x, y) {
+  ensureAudio();
+  if ((won || lost) && endBtnRect && inRect(x, y, endBtnRect.x, endBtnRect.y, endBtnRect.w, endBtnRect.h)) { initGame(); resize(); return; }
+}
+
+function getCell(x, y) {
+  const col = Math.floor((x - gridX) / cellSize), row = Math.floor((y - gridY) / cellSize);
+  if (row >= 0 && row < GRID_SIZE && col >= 0 && col < GRID_SIZE) return { row, col };
+  return null;
+}
+
+canvas.addEventListener('mousedown', e => {
+  e.preventDefault();
+  if (e.button === 2) return;
+  if (won || lost) return;
+  const p = getPos(e), cell = getCell(p.x, p.y);
+  if (!cell) return;
+  pressCell = cell; isLongPress = false;
+  pressTimer = setTimeout(() => { isLongPress = true; handleLongPress(cell.row, cell.col); }, 400);
+});
+
+canvas.addEventListener('mouseup', e => {
+  e.preventDefault();
+  if (e.button === 2) return;
+  clearTimeout(pressTimer);
+  const p = getPos(e);
+  if (won || lost || !pressCell) { handleClick(p.x, p.y); pressCell = null; return; }
+  if (!isLongPress && pressCell) handleTap(pressCell.row, pressCell.col);
+  pressCell = null; isLongPress = false;
+});
+
+canvas.addEventListener('mouseleave', () => { clearTimeout(pressTimer); pressCell = null; isLongPress = false; });
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (won || lost) return;
+  const p = getPos(e), cell = getCell(p.x, p.y);
+  if (!cell) return;
+  pressCell = cell; isLongPress = false;
+  pressTimer = setTimeout(() => { isLongPress = true; handleLongPress(cell.row, cell.col); }, 400);
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  clearTimeout(pressTimer);
+  const p = getPos(e);
+  if (won || lost || !pressCell) { handleClick(p.x, p.y); pressCell = null; return; }
+  if (!isLongPress && pressCell) handleTap(pressCell.row, pressCell.col);
+  pressCell = null; isLongPress = false;
+}, { passive: false });
+
+canvas.addEventListener('touchcancel', () => { clearTimeout(pressTimer); pressCell = null; isLongPress = false; });
+
+canvas.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  if (won || lost) return;
+  const p = getPos(e), cell = getCell(p.x, p.y);
+  if (cell) handleLongPress(cell.row, cell.col);
+});
+
+// ── Auto-Solve ──
+let autoSolveTimer = null;
+let autoSolving = false;
+
+function autoSolve() {
+  if (autoSolveTimer) { clearInterval(autoSolveTimer); autoSolveTimer = null; autoSolving = false; return; }
+  if (won || lost) return;
+
+  const result = solvePuzzle(CLUES, GRID_SIZE);
+  if (!result.solved) return;
+
+  const steps = [];
+  for (let r = 0; r < GRID_SIZE; r++) for (let c = 0; c < GRID_SIZE; c++) {
+    if (result.grid[r][c] === 1 && grid[r][c] !== 1) steps.push({ r, c });
+  }
+
+  autoSolving = true;
+  let idx = 0;
+  autoSolveTimer = setInterval(() => {
+    if (idx >= steps.length || won || lost) { clearInterval(autoSolveTimer); autoSolveTimer = null; autoSolving = false; return; }
+    const s = steps[idx++];
+    grid[s.r][s.c] = 1; playFill();
+    anims.highlightRow = s.r; anims.highlightCol = s.c; anims.highlightAlpha = 1;
+    checkLineCompletions(); checkWin();
+  }, 150);
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 's' || e.key === 'S') autoSolve();
+});
+
+// ── Init ──
+window.addEventListener('resize', resize);
+initGame();
+resize();
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
